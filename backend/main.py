@@ -42,6 +42,13 @@ class SimulationRequest(BaseModel):
     turns: int
     conversation: Optional[List[Message]] = []
 
+class SummaryRequest(BaseModel):
+    topic: str
+    role_a: str
+    role_b: str
+    conversation: List[Message]
+    summary_model: Optional[str] = "openai/gpt-4.1-2025-04-14"
+
 def generate_prompt(topic: str, my_role: str, previous_messages: List[Message], my_speaker: str, role_a: str, role_b: str) -> str:
     def speaker_role(speaker):
         return role_a if speaker == 'A' else role_b
@@ -80,6 +87,54 @@ def generate_prompt(topic: str, my_role: str, previous_messages: List[Message], 
     )
     return base_prompt
 
+def generate_summary_prompt(topic: str, role_a: str, role_b: str, conversation: List[Message]) -> str:
+    """대화 요약을 위한 프롬프트 생성"""
+    def speaker_role(speaker):
+        return role_a if speaker == 'A' else role_b
+    
+    # 대화 내용 정리
+    conversation_text = "\n".join([
+        f"{speaker_role(msg.speaker)} ({msg.speaker}): {msg.message}"
+        for msg in conversation
+    ])
+    
+    summary_prompt = f"""다음은 '{topic}'이라는 주제로 두 역할 간의 대화입니다.
+
+참여자:
+- {role_a} (화자 A)
+- {role_b} (화자 B)
+
+대화 내용:
+{conversation_text}
+
+위 대화를 다음 형식으로 요약해주세요:
+
+## 대화 주제
+{topic}
+
+## 참여자
+- **{role_a}**: [이 역할의 특징과 관점을 간단히 설명]
+- **{role_b}**: [이 역할의 특징과 관점을 간단히 설명]
+
+## 주요 논점
+- [핵심 논점 1]
+- [핵심 논점 2]
+- [핵심 논점 3]
+
+## 각자의 입장
+**{role_a}의 입장:**
+[주요 주장과 논리를 요약]
+
+**{role_b}의 입장:**
+[주요 주장과 논리를 요약]
+
+## 대화의 흐름과 결론
+[대화가 어떻게 전개되었는지, 합의점이나 차이점은 무엇인지 등을 종합적으로 정리]
+
+한국어로 명확하고 체계적으로 요약해주세요."""
+    
+    return summary_prompt
+
 @app.post("/simulate")
 async def simulate_conversation(request: SimulationRequest):
     try:
@@ -111,6 +166,27 @@ async def simulate_conversation(request: SimulationRequest):
         return {"conversation": [new_message]}  # 새 메시지만 반환
     except Exception as e:
         logger.error(f"Error in simulate_conversation: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/summary")
+async def generate_conversation_summary(request: SummaryRequest):
+    try:
+        # 요약 프롬프트 생성
+        summary_prompt = generate_summary_prompt(
+            request.topic,
+            request.role_a,
+            request.role_b,
+            request.conversation
+        )
+        
+        logger.info(f"Generating summary using model {request.summary_model}")
+        
+        # 요약 생성 (온도는 낮게 설정하여 일관성 확보)
+        summary = call_llm(summary_prompt, 0.3, request.summary_model)
+        
+        return {"summary": summary}
+    except Exception as e:
+        logger.error(f"Error in generate_conversation_summary: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
